@@ -1,0 +1,120 @@
+diff --git a/app/src/main/java/ru/drdroid78/sberboom/audio/StreamEngine.kt b/app/src/main/java/ru/drdroid78/sberboom/audio/StreamEngine.kt
+index a6ce85f..f314156 100644
+--- a/app/src/main/java/ru/drdroid78/sberboom/audio/StreamEngine.kt
++++ b/app/src/main/java/ru/drdroid78/sberboom/audio/StreamEngine.kt
+@@ -69,6 +69,7 @@ class StreamEngine(private val context: Context) {
+     private val running = AtomicBoolean(false)
+     private var client: SberBoomClient? = null
+     private var sender: UdpAudioSender? = null
++    private var ptpClient: StarPtpClient? = null
+     private var encoder: OpusEncoder? = null
+     private var sessionId: String = ""
+     private var masterId: String = ""
+@@ -124,9 +125,23 @@ class StreamEngine(private val context: Context) {
+             return@withContext Result.failure(IllegalStateException(msg))
+         }
+ 
+-        masterId = speaker
++        // Stock sender uses its own local source-device ID as master_device_id.
++        // Reuse the exact clientId registered in the SberCast WebSocket session.
++        masterId = c.clientId
+         sessionId = Protocol.newSessionId()
+-        senderId = config.clientId
++        senderId = c.clientId
++
++        // StarPTP peer on UDP/4391: Sync + DelayReq every 1000 us, answer DelayReq.
++        // The speaker needs this clock mapping before it can resolve masterId.
++        ptpClient = runCatching {
++            StarPtpClient(config.host, onLog = { DiagLog.i(it) }).also { it.start() }
++        }.onFailure {
++            DiagLog.w("StarPTP не запущен: ${it.message}")
++        }.getOrNull()
++        if (ptpClient != null) {
++            delay(500) // allow the speaker to collect initial PTP samples
++            DiagLog.i("StarPTP warm-up: ${ptpClient?.snapshot()}")
++        }
+ 
+         if (config.volume in 0..100) {
+             val st = runCatching { c.setVolume(config.volume) }.getOrNull()
+@@ -142,8 +157,9 @@ class StreamEngine(private val context: Context) {
+         DiagLog.i("UDP: $localIp:$udpPort -> ${config.host}:$udpPort")
+         DiagLog.d("settings=$settings")
+ 
+-        val star = Protocol.starCommandAudioStart(masterId, sessionId, senderId, settings, 0)
+-        DiagLog.i("Отправка StarCommand(160) StartStreaming, master=$masterId, mr=$sessionId")
++        val monoTimestamp = startTimestampMs()
++        val star = Protocol.starCommandAudioStart(masterId, sessionId, senderId, settings, monoTimestamp)
++        DiagLog.i("Отправка StarCommand(160) StartStreaming, master=$masterId, monoTimestampMs=$monoTimestamp, mr=$sessionId")
+         val reply = runCatching { c.sendStarCommand(star, 4_000) }.getOrNull()
+         if (reply == null) {
+             DiagLog.w("Ответ на StarCommand не получен за 4 с")
+@@ -215,7 +231,7 @@ class StreamEngine(private val context: Context) {
+                     if (r?.isSuccess == true) {
+                         attempts = 0
+                         val start = Protocol.starCommandAudioStart(
+-                            masterId, sessionId, senderId, lastSettingsJson, 0
++                            masterId, sessionId, senderId, lastSettingsJson, startTimestampMs()
+                         )
+                         runCatching { c.sendStarCommand(start, 3_000) }
+                         DiagLog.i("Переподключение выполнено, StartStreaming отправлен повторно")
+@@ -231,17 +247,23 @@ class StreamEngine(private val context: Context) {
+         }
+ 
+         statsJob = scope.launch {
++            var lastPtpLogMs = 0L
+             while (isActive && running.get()) {
+                 delay(500)
+                 val snd = sender
++                val uptimeMs = System.currentTimeMillis() - startedAt
+                 if (snd != null) {
+                     _stats.value = Stats(
+                         packets = snd.packetsSent.get(),
+                         bytes = snd.bytesSent.get(),
+-                        uptimeMs = System.currentTimeMillis() - startedAt,
++                        uptimeMs = uptimeMs,
+                         lastPacketAgeMs = 0
+                     )
+                 }
++                if (uptimeMs - lastPtpLogMs >= 5_000L) {
++                    ptpClient?.let { DiagLog.i("StarPTP stats: ${it.snapshot()}") }
++                    lastPtpLogMs = uptimeMs
++                }
+             }
+         }
+ 
+@@ -307,6 +329,8 @@ class StreamEngine(private val context: Context) {
+                 }
+             }
+         }
++        ptpClient?.close()
++        ptpClient = null
+         keepAliveJob?.cancel()
+         monitorJob?.cancel()
+         statsJob?.cancel()
+@@ -327,6 +351,8 @@ class StreamEngine(private val context: Context) {
+ 
+     private fun cleanup() {
+         running.set(false)
++        ptpClient?.close()
++        ptpClient = null
+         keepAliveJob?.cancel()
+         monitorJob?.cancel()
+         statsJob?.cancel()
+@@ -340,8 +366,17 @@ class StreamEngine(private val context: Context) {
+         client = null
+     }
+ 
++    /** Stock sender timestamp: CLOCK_MONOTONIC_RAW milliseconds + 400 ms + 512/48 ms. */
++    private fun startTimestampMs(): Long =
++        StarPtpClient.monotonicMillis() + START_PLAYING_DELAY_MS + (FRAMES_PER_BLOCK / 48L)
++
+     fun shutdown() {
+         stop()
+         scope.cancel()
+     }
++
++    private companion object {
++        const val START_PLAYING_DELAY_MS = 400L
++        const val FRAMES_PER_BLOCK = 512L
++    }
+ }
