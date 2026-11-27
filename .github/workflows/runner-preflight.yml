@@ -1,0 +1,60 @@
+name: SberBoom runner preflight
+on:
+  push:
+    branches:
+      - diagnostics/runner-preflight
+    paths:
+      - '.github/workflows/runner-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Measure runner resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CPU threads: $(nproc)"
+          free -h
+          df -h "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+          df -B1 --output=avail "$RUNNER_TEMP"
+          java -version
+          python3 --version
+          echo "Firmware TV archive expected bytes: 1065749290"
+          echo "Firmware SberBox archive expected bytes: 680571804"
+      - name: Check official SberBox archive without publishing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d "$RUNNER_TEMP/sber-preflight.XXXXXX")"
+          trap 'rm -rf "$work"' EXIT
+          archive="$work/ota.zip"
+          url='https://cdn.sberdevices.ru/firmware-s3/sberbox_y4/release-develop_1.94.94-sberbox_y4_ota.zip'
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 360 --max-filesize 1000000000 --output "$archive" "$url"
+          python3 - "$archive" <<'PY'
+          import hashlib, os, sys, zipfile, shutil
+          path = sys.argv[1]
+          with open(path, 'rb') as f:
+              digest = hashlib.file_digest(f, 'sha256').hexdigest()
+          size = os.path.getsize(path)
+          print('Downloaded bytes:', size)
+          print('SHA256:', digest)
+          if size != 680571804 or digest != 'a6fb140375de31df7b06de5ce3e55e582ac24a33e250edb737590d066bc37e5f':
+              raise SystemExit('Archive does not match pinned manifest')
+          with zipfile.ZipFile(path) as z:
+              files = [i for i in z.infolist() if not i.is_dir()]
+              total = sum(i.file_size for i in files)
+              print('ZIP member count:', len(files))
+              print('ZIP declared expanded bytes:', total)
+              print('Largest ZIP member bytes:', max((i.file_size for i in files), default=0))
+              print('Contains payload.bin:', any(i.filename.rsplit('/',1)[-1] == 'payload.bin' for i in files))
+              print('Contains image files:', any(i.filename.lower().endswith('.img') for i in files))
+              print('Free bytes after download:', shutil.disk_usage(os.path.dirname(path)).free)
+              print('Note: nested filesystem expansion and Ghidra storage are not measured.')
+          PY
+      - name: Final disk measurement
+        if: always()
+        run: df -h "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
