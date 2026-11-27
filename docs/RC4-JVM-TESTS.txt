@@ -1,0 +1,66 @@
+PASS malformed JWT
+PASS invalid algorithm
+PASS no expiry
+PASS expiry boundary
+PASS valid format only
+PASS matching start response
+PASS different master
+PASS different session
+PASS no reply
+PASS dead message
+PASS timestamp
+PASS repeated masters
+PASS sequence wrap
+PASS timestamp wrap
+PASS Opus payload
+PASS 20ms Opus
+PASS PTP sync wire
+PASS PTP delay request wire
+PASS PTP delay response wire
+PASS PTP unsigned sequence
+PASS PTP timestamp LE
+PASS PTP rejects short reply
+PASS PTP rejects unknown type
+PASS PTP request has no timestamp
+PASS StarCommand default ACK
+PASS StarCommand mismatched id
+PASS StarCommand error ACK
+PASS StarCommand rejects request
+PASS StarCommand requires response field
+PASS media default success
+PASS media unsupported
+PASS media missing response
+PASS volume empty acknowledgement
+PASS volume rejects numeric status
+PASS group metadata fields
+PASS metadata rejected status
+PASS multiroom exact wire
+PASS exclusive start
+PASS stop before StartStreaming
+PASS cannot start during cleanup
+PASS finish cancelled startup
+PASS stale stop cannot affect new session
+PASS remote start attempt recorded
+PASS uncertain ACK requires stop
+PASS late ACK cannot activate cancelled session
+PASS finish uncertain session
+PASS active session
+PASS shutdown cannot start another session
+PASS PTP wrong sequence 0
+PASS PTP valid sample 0
+PASS PTP replay rejected 0
+PASS PTP wrong sequence 1
+PASS PTP valid sample 1
+PASS PTP replay rejected 1
+PASS PTP wrong sequence 2
+PASS PTP valid sample 2
+PASS PTP replay rejected 2
+PASS PTP offset
+PASS PTP propagation
+PASS PTP remote to local
+PASS PTP sample expiration
+PASS real UDP PTP two-way samples
+PASS real UDP PTP clock offset
+PASS real UDP PTP no transport errors
+PASS PTP sockets closed
+65 assertions passed; pure Kotlin/JVM, not Android or hardware

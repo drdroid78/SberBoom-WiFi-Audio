@@ -1,0 +1,52 @@
+name: Android APK (SberBoom)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['app/**', 'testclient/**', 'gradle/**', '*.gradle.kts', 'gradlew', '.github/workflows/android.yml']
+  push:
+    branches: [main, android-rc2, android-rc3, android-rc4]
+    paths: ['app/**', 'testclient/**', 'gradle/**', '*.gradle.kts', 'gradlew', '.github/workflows/android.yml']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare preinstalled Java 17 and Android SDK
+        shell: bash
+        run: |
+          test -n "$JAVA_HOME_17_X64"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools'
+      - name: Verify wrapper and run Python regression tests
+        run: |
+          echo '498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17  gradle/wrapper/gradle-wrapper.jar' | sha256sum -c -
+          python3 -m unittest discover -s testclient -p test_protocol.py -v
+          chmod +x gradlew
+      - name: Test, lint and build Android APK
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Verify and package APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/SberBoom-WiFi-Audio-rc4-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose dist/SberBoom-WiFi-Audio-rc4-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging dist/SberBoom-WiFi-Audio-rc4-debug.apk > dist/apk-info.txt
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: SberBoom-WiFi-Audio-rc4-debug
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: android-test-and-lint-reports
+          path: |
+            app/build/test-results/
+            app/build/reports/
+          if-no-files-found: ignore

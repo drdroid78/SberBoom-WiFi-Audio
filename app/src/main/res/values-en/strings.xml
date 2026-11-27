@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SberBoom Wi-Fi Audio</string>
+
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_streaming">Sending UDP (sound unconfirmed)</string>
+
+    <string name="scan">Find speakers</string>
+    <string name="scanning">Searching local network…</string>
+    <string name="devices_title">Speakers on the network</string>
+    <string name="no_devices">No speakers found. Make sure the phone and the speaker are on the same Wi-Fi network and the router does not block multicast.</string>
+    <string name="manual_host_hint">Speaker IP address</string>
+    <string name="connect">Connect</string>
+    <string name="pair">Pair</string>
+    <string name="pair_hint">Press and hold the “+” button on the speaker when prompted.</string>
+    <string name="pair_waiting">Waiting for the “+” button on the speaker…</string>
+    <string name="pair_success">Paired successfully</string>
+    <string name="pair_failed">Pairing failed: %1$s</string>
+    <string name="forget_pairing">Forget pairing</string>
+
+    <string name="volume">Volume</string>
+    <string name="volume_value">%1$d%%</string>
+
+    <string name="test_tone">Test tone</string>
+    <string name="play_file">Local file</string>
+    <string name="capture_audio">Capture app audio</string>
+    <string name="stop">Stop</string>
+
+    <string name="stream_params">Stream parameters</string>
+    <string name="params_value">%1$d Hz · %2$d ch · %3$s</string>
+    <string name="codec_pcm">PCM 16-bit</string>
+    <string name="codec_opus">Opus</string>
+
+    <string name="diagnostics">Diagnostics log</string>
+    <string name="settings_title">Settings</string>
+    <string name="log_title">Log</string>
+    <string name="settings_client_name">Client name</string>
+    <string name="settings_auto_reconnect">Automatic reconnect</string>
+    <string name="settings_sample_rate">Sample rate</string>
+    <string name="settings_channels">Channels</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="open_settings">Settings</string>
+    <string name="open_log">Log</string>
+    <string name="copy_log">Copy</string>
+    <string name="clear_log">Clear</string>
+    <string name="log_copied">Log copied</string>
+    <string name="log_empty">Log is empty</string>
+
+    <string name="notification_channel">Audio streaming</string>
+    <string name="notification_channel_name">Audio streaming</string>
+    <string name="notification_title">SberBoom Wi-Fi Audio</string>
+    <string name="notification_text">Streaming audio to the speaker</string>
+    <string name="notification_stop">Stop</string>
+
+    <string name="permission_notifications">Allow notifications to see the streaming state.</string>
+    <string name="capture_permission_required">Screen/audio capture permission is required.</string>
+    <string name="file_pick_title">Choose an audio file</string>
+    <string name="error_no_connection">Connect to the speaker first</string>
+    <string name="error_generic">Error: %1$s</string>
+    <string name="device_unknown">SberBoom speaker</string>
+    <string name="fw_label">Firmware: %1$s</string>
+    <string name="model_label">Model: %1$s</string>
+    <string name="stream_not_confirmed">UDP is being sent; audible playback is unconfirmed.</string>
+
+    <string name="settings_speaker_id">Speaker ID (master_device_id)</string>
+    <string name="settings_speaker_id_hint">Filled from mDNS/GetMetaData; can be entered manually</string>
+    <string name="settings_jwt">Backend JWT (optional)</string>
+    <string name="settings_jwt_hint">Your account token; without it StarCommand(160) is rejected</string>
+    <string name="settings_jwt_warning">The speaker validates the JWT cryptographically. A PIN token does not work for the audio channel. Do not paste someone else’s token.</string>
+    <string name="settings_jwt_check">Token check: %1$s</string>
+    <string name="probe_network">Check network (DLNA/ports)</string>
+    <string name="probe_title">Speaker network capabilities</string>
+    <string name="probe_no_host">Enter the speaker address first</string>
+    <string name="probe_running">Checking network…</string>
+    <string name="settings_host">Speaker address</string>
+    <string name="settings_port">WebSocket port</string>
+    <string name="settings_forget">Forget PIN token</string>
+    <string name="settings_pairing_forgotten">PIN token removed</string>
+    <string name="speaker_id_required">Set the speaker ID in Settings</string>
+    <string name="connected_to">Connected: %1$s</string>
+    <string name="volume_applied">Volume: %1$d%%</string>
+    <string name="jwt_missing">A valid backend JWT is required</string>
+    <string name="jwt_present">JWT format and expiry checked locally; rights unverified</string>
+    <string name="about_title">About</string>
+    <string name="about_text">The app uses the speaker’s native SberCast/StarOS protocol. PIN pairing and volume control work without a JWT. The firmware accepts the audio start command (StarCommand 160) only with a backend JWT, so without a token there is no sound — this is a firmware restriction, not an app limitation.</string>
+    <string name="cert_pin">Speaker certificate SHA-256</string>
+    <string name="cert_pin_hint">Only an independently verified fingerprint; blank uses system TLS</string>
+    <string name="cert_pin_invalid">Enter 64 hexadecimal characters</string>
+    <string name="credentials_save_error">Could not save credentials securely</string>
+    <string name="media_previous">Prev</string>
+    <string name="media_play">Play</string>
+    <string name="media_pause">Pause</string>
+    <string name="media_next">Next</string>
+    <string name="media_mute">Mute</string>
+    <string name="media_unmute">Unmute</string>
+    <string name="media_requires_pairing">Connect and pair first</string>
+    <string name="media_accepted">Speaker accepted command</string>
+    <string name="media_unconfirmed">Speaker response not confirmed</string>
+    <string name="reconnect_pending">Automatic reconnect: pending new-session verification</string>
+    <string name="endpoint_changed">Endpoint or certificate changed. Verify the certificate and pair again.</string>
+    <string name="media_multiroom">Start multiroom</string>
+    <string name="media_unsupported">The audio source does not support this command</string>
+    <string name="multiroom_supported">Multiroom supported</string>
+    <string name="multiroom_mode">Group mode: %1$s</string>
+</resources>

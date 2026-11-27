@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SberBoom Wi-Fi Audio</string>
+
+    <string name="status_disconnected">Не подключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_streaming">UDP отправляется (звук не подтверждён)</string>
+
+    <string name="scan">Найти динамики</string>
+    <string name="scanning">Поиск в локальной сети…</string>
+    <string name="devices_title">Динамики в сети</string>
+    <string name="no_devices">Динамики не найдены. Убедитесь, что телефон и динамик в одной сети Wi-Fi и роутер не блокирует multicast.</string>
+    <string name="manual_host_hint">IP-адрес динамика</string>
+    <string name="connect">Подключиться</string>
+    <string name="pair">Сопряжение</string>
+    <string name="pair_hint">Нажмите и удерживайте кнопку «+» на динамике, когда появится запрос.</string>
+    <string name="pair_waiting">Ожидание кнопки «+» на динамике…</string>
+    <string name="pair_success">Сопряжение выполнено</string>
+    <string name="pair_failed">Не удалось сопрячься: %1$s</string>
+    <string name="forget_pairing">Забыть сопряжение</string>
+
+    <string name="volume">Громкость</string>
+    <string name="volume_value">%1$d%%</string>
+
+    <string name="test_tone">Тестовый сигнал</string>
+    <string name="play_file">Локальный файл</string>
+    <string name="capture_audio">Захват звука приложения</string>
+    <string name="stop">Остановить</string>
+
+    <string name="stream_params">Параметры потока</string>
+    <string name="params_value">%1$d Гц · %2$d канал(а) · %3$s</string>
+    <string name="codec_pcm">PCM 16 бит</string>
+    <string name="codec_opus">Opus</string>
+
+    <string name="diagnostics">Диагностический журнал</string>
+    <string name="settings_title">Настройки</string>
+    <string name="log_title">Журнал</string>
+    <string name="settings_client_name">Имя клиента</string>
+    <string name="settings_auto_reconnect">Автоматическое переподключение</string>
+    <string name="settings_sample_rate">Частота дискретизации</string>
+    <string name="settings_channels">Каналы</string>
+    <string name="settings_save">Сохранить</string>
+    <string name="settings_saved">Настройки сохранены</string>
+    <string name="open_settings">Настройки</string>
+    <string name="open_log">Журнал</string>
+    <string name="copy_log">Копировать</string>
+    <string name="clear_log">Очистить</string>
+    <string name="log_copied">Журнал скопирован</string>
+    <string name="log_empty">Журнал пуст</string>
+
+    <string name="notification_channel">Передача звука</string>
+    <string name="notification_channel_name">Передача звука</string>
+    <string name="notification_title">SberBoom Wi-Fi Audio</string>
+    <string name="notification_text">Передача звука на динамик</string>
+    <string name="notification_stop">Остановить</string>
+
+    <string name="permission_notifications">Разрешите уведомления, чтобы видеть состояние передачи.</string>
+    <string name="capture_permission_required">Для захвата звука нужно разрешение на запись экрана/звука.</string>
+    <string name="file_pick_title">Выберите аудиофайл</string>
+    <string name="error_no_connection">Сначала подключитесь к динамику</string>
+    <string name="error_generic">Ошибка: %1$s</string>
+    <string name="device_unknown">Динамик SberBoom</string>
+    <string name="fw_label">Прошивка: %1$s</string>
+    <string name="model_label">Модель: %1$s</string>
+    <string name="stream_not_confirmed">UDP отправляется; звук на колонке не подтверждён.</string>
+
+    <string name="settings_speaker_id">ID динамика (master_device_id)</string>
+    <string name="settings_speaker_id_hint">Заполняется из mDNS/GetMetaData; можно указать вручную</string>
+    <string name="settings_jwt">Backend-JWT (необязательно)</string>
+    <string name="settings_jwt_hint">Токен вашей учётной записи; без него StarCommand(160) отклоняется</string>
+    <string name="settings_jwt_warning">Прошивка динамика проверяет JWT криптографически. PIN-токен для аудиоканала не подходит. Не вставляйте чужие токены.</string>
+    <string name="settings_jwt_check">Проверка токена: %1$s</string>
+    <string name="probe_network">Проверить сеть (DLNA/порты)</string>
+    <string name="probe_title">Возможности динамика в сети</string>
+    <string name="probe_no_host">Сначала укажите адрес динамика</string>
+    <string name="probe_running">Проверка сети…</string>
+    <string name="settings_host">Адрес динамика</string>
+    <string name="settings_port">Порт WebSocket</string>
+    <string name="settings_forget">Забыть PIN-токен</string>
+    <string name="settings_pairing_forgotten">PIN-токен удалён</string>
+    <string name="speaker_id_required">Укажите ID динамика в настройках</string>
+    <string name="connected_to">Подключено: %1$s</string>
+    <string name="volume_applied">Громкость: %1$d%%</string>
+    <string name="jwt_missing">Требуется действующий backend-JWT</string>
+    <string name="jwt_present">Формат и срок JWT проверены локально; права не подтверждены</string>
+    <string name="about_title">О приложении</string>
+    <string name="about_text">Приложение использует штатный протокол SberCast/StarOS динамика. PIN-сопряжение и управление громкостью работают без JWT. Запуск аудиопотока (StarCommand 160) прошивка принимает только с backend-JWT, поэтому без токена звук не воспроизводится — это ограничение прошивки, а не приложения.</string>
+    <string name="cert_pin">SHA-256 сертификата колонки</string>
+    <string name="cert_pin_hint">Только независимо проверенный отпечаток; пусто — системная TLS-проверка</string>
+    <string name="cert_pin_invalid">Нужно 64 шестнадцатеричных символа</string>
+    <string name="credentials_save_error">Не удалось сохранить защищённые данные</string>
+    <string name="media_previous">Назад</string>
+    <string name="media_play">Пуск</string>
+    <string name="media_pause">Пауза</string>
+    <string name="media_next">Далее</string>
+    <string name="media_mute">Без звука</string>
+    <string name="media_unmute">Со звуком</string>
+    <string name="media_requires_pairing">Сначала подключитесь и выполните сопряжение</string>
+    <string name="media_accepted">Колонка приняла команду</string>
+    <string name="media_unconfirmed">Ответ колонки не подтверждён</string>
+    <string name="reconnect_pending">Автопереподключение: ожидает проверки новой сессии</string>
+    <string name="endpoint_changed">Адрес или сертификат изменён. Проверьте сертификат и выполните сопряжение заново.</string>
+    <string name="media_multiroom">Запустить мультирум</string>
+    <string name="media_unsupported">Источник звука не поддерживает команду</string>
+    <string name="multiroom_supported">Мультирум поддерживается</string>
+    <string name="multiroom_mode">Режим группы: %1$s</string>
+</resources>
