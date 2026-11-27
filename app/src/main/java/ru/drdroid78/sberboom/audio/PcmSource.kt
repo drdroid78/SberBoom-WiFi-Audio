@@ -222,17 +222,28 @@ class PlaybackCaptureSource(
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT
         )
-        val rec = AudioRecord.Builder()
-            .setAudioFormat(format)
-            .setBufferSizeInBytes(maxOf(minBuf * 2, 16 * 1024))
-            .setAudioPlaybackCaptureConfig(config)
-            .build()
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
-            throw IllegalStateException("AudioRecord не инициализирован (нет разрешения RECORD_AUDIO?)")
+        val rec = try {
+            AudioRecord.Builder()
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(maxOf(minBuf * 2, 16 * 1024))
+                .setAudioPlaybackCaptureConfig(config)
+                .build()
+        } catch (denied: SecurityException) {
+            throw IllegalStateException("Нет разрешения RECORD_AUDIO или разрешение на захват отозвано", denied)
         }
-        rec.startRecording()
-        record = rec
+        try {
+            check(rec.state == AudioRecord.STATE_INITIALIZED) {
+                "AudioRecord не инициализирован (нет разрешения RECORD_AUDIO?)"
+            }
+            rec.startRecording()
+            record = rec
+        } catch (denied: SecurityException) {
+            rec.release()
+            throw IllegalStateException("Разрешение на запись или захват аудио отозвано", denied)
+        } catch (failure: RuntimeException) {
+            rec.release()
+            throw failure
+        }
     }
 
     override fun read(out: ByteArray): Int {
