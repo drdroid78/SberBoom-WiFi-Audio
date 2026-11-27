@@ -1,0 +1,71 @@
+name: Salute TV firmware verification
+on:
+  push:
+    branches: [diagnostics/runner-preflight]
+    paths: ['.github/workflows/tv-verify.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Resolve official catalog link and verify archive
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,json,re,hashlib,tempfile,os,zipfile
+          from pathlib import Path
+          base='https://sberdevices.ru'
+          target='SDX32H3113'
+          expected_size=1065749290
+          expected_hash='936463c639b0e199b3cf0fd54e8500f25f4b208eceea97bf85ab4fc840b5d082'
+          def request(u):
+              return urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json, */*','Referer':base+'/firmware_tv/'}),timeout=60)
+          def records(path):
+              with request(base+path) as r: data=json.load(r)
+              return data if isinstance(data,list) else data['data']
+          def norm(s): return re.sub('[^A-Z0-9]','',str(s).upper())
+          brands=[b for b in records('/strapi/list-brands') if norm(b.get('name',''))=='SBER']
+          print('Matching brands:',[(b['id'],b['name']) for b in brands])
+          assert brands, 'Sber brand not found'
+          candidates={}
+          for b in brands:
+              rows=records('/strapi/list-firmwares?'+urllib.parse.urlencode({'list_brand':b['id'],'_limit':-1}))
+              for row in rows:
+                  if norm(row.get('name',''))!=target: continue
+                  u=row.get('link')
+                  print('Catalog match:',row.get('name'),row.get('date'),row.get('platform'),u)
+                  if isinstance(u,str) and u:
+                      u=urllib.parse.urljoin(base,u)
+                      p=urllib.parse.urlparse(u)
+                      if p.scheme=='https' and (p.hostname=='sberdevices.ru' or (p.hostname or '').endswith('.sberdevices.ru')): candidates[u]=row.get('date')
+          assert candidates,'No official model download links found'
+          print('Unique official links:',len(candidates))
+          urls=sorted(candidates,key=lambda u:'1.100.39' not in u)
+          with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as td:
+              for u in urls[:12]:
+                  print('Testing URL:',u,flush=True)
+                  p=Path(td)/'firmware.zip'
+                  try:
+                      with request(u) as r:
+                          size=r.headers.get('Content-Length')
+                          if size and int(size)!=expected_size:
+                              print('Different size:',size);continue
+                          h=hashlib.sha256();n=0
+                          with p.open('wb') as f:
+                              while chunk:=r.read(1024*1024):
+                                  n+=len(chunk)
+                                  if n>expected_size: break
+                                  h.update(chunk);f.write(chunk)
+                      print('Downloaded bytes:',n,'SHA256:',h.hexdigest())
+                      if n!=expected_size or h.hexdigest()!=expected_hash: continue
+                      with zipfile.ZipFile(p) as z:
+                          members=[i for i in z.infolist() if not i.is_dir()]
+                          print('Verified ZIP members:',len(members),'expanded bytes:',sum(i.file_size for i in members))
+                      print('VERIFIED_OFFICIAL_URL='+u,flush=True)
+                      break
+                  except Exception as e: print('Download error:',str(e))
+                  finally: p.unlink(missing_ok=True)
+              else: raise SystemExit('Exact pinned archive not verified')
+          PY
