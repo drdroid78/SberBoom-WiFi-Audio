@@ -8,21 +8,33 @@ permissions:
 jobs:
   lookup:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Inspect public firmware catalog component
+      - name: Resolve public model links without downloading archives
+        shell: bash
         run: |
-          python3 - <<'PY'
-          import urllib.request,re
-          base='https://cdn-app.sberdevices.ru/orion2/sberdevices/2acd6b0d/_next/static/chunks/'
-          for name in ['pages/firmware_tv-efda54bb2a3af33c.js','5977-13eb82686bfd3dca.js','4238-d8aeade6ba01721d.js']:
-              with urllib.request.urlopen(base+name,timeout=20) as r: s=r.read(8_000_000).decode('utf8','replace')
-              print('Component',name,'bytes',len(s))
-              if name.startswith('pages/'):
-                  # The public page-specific component is inspected for its catalog request.
-                  for m in list(re.finditer(r'(?i)fetch\(|/strapi|firmware|\.json|\.php|\.zip|brand|model|manufactur|прошив|download|https?://',s))[:65]:
-                      print(s[max(0,m.start()-110):m.end()+180])
-              else:
-                  for m in list(re.finditer(r'(?i)/strapi[^"\x27 ]*|firmware|tv_firm|\.zip|SDX[-_]?32H3113',s))[:12]:
-                      print(s[max(0,m.start()-90):m.end()+140])
+          set -euo pipefail
+          python3 -u - <<'PY'
+          import json,subprocess,urllib.parse,re
+          base='https://sberdevices.ru'
+          def records(path):
+              print('Catalog request:',path,flush=True)
+              s=subprocess.check_output(['curl','-fsSL','--connect-timeout','8','--max-time','20','-A','Mozilla/5.0','-H','Accept: application/json','-e',base+'/firmware_tv/',base+path])
+              d=json.loads(s)
+              return d if isinstance(d,list) else d['data']
+          def norm(s): return re.sub('[^A-Z0-9]','',str(s).upper())
+          brands=records('/strapi/list-brands')
+          print('Catalog brand count:',len(brands))
+          matches=[x for x in brands if 'SBER' in norm(x.get('name',''))]
+          print('Matching brands:',[(x['id'],x['name']) for x in matches])
+          assert matches,'No matching Sber brand'
+          count=0
+          for b in matches[:3]:
+              rows=records('/strapi/list-firmwares?'+urllib.parse.urlencode({'list_brand':b['id'],'_limit':-1}))
+              print('Catalog record count:',len(rows))
+              for row in rows:
+                  if norm(row.get('name',''))=='SDX32H3113':
+                      print('MODEL_MATCH:',json.dumps({k:row.get(k) for k in ['name','date','link','platform']},ensure_ascii=False))
+                      count+=1
+          assert count,'No model found'
           PY
