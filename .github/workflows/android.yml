@@ -16,13 +16,17 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Prepare preinstalled Java 17 and Android SDK
+      - name: Prepare Java 17
         shell: bash
         run: |
           test -n "$JAVA_HOME_17_X64"
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
           echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
-          sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools'
+      - name: Set up Android SDK and build tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          log-accepted-android-sdk-licenses: 'false'
       - name: Verify wrapper and run Python regression tests
         run: |
           echo '498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17  gradle/wrapper/gradle-wrapper.jar' | sha256sum -c -
