@@ -1,0 +1,28 @@
+name: Salute TV catalog lookup
+on:
+  push:
+    branches: [diagnostics/runner-preflight]
+    paths: ['.github/workflows/tv-lookup.yml']
+permissions:
+  contents: read
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect public firmware catalog component
+        run: |
+          python3 - <<'PY'
+          import urllib.request,re
+          base='https://cdn-app.sberdevices.ru/orion2/sberdevices/2acd6b0d/_next/static/chunks/'
+          for name in ['pages/firmware_tv-efda54bb2a3af33c.js','5977-13eb82686bfd3dca.js','4238-d8aeade6ba01721d.js']:
+              with urllib.request.urlopen(base+name,timeout=20) as r: s=r.read(8_000_000).decode('utf8','replace')
+              print('Component',name,'bytes',len(s))
+              if name.startswith('pages/'):
+                  # The public page-specific component is inspected for its catalog request.
+                  for m in list(re.finditer(r'(?i)fetch\(|/strapi|firmware|\.json|\.php|\.zip|brand|model|manufactur|прошив|download|https?://',s))[:65]:
+                      print(s[max(0,m.start()-110):m.end()+180])
+              else:
+                  for m in list(re.finditer(r'(?i)/strapi[^"\x27 ]*|firmware|tv_firm|\.zip|SDX[-_]?32H3113',s))[:12]:
+                      print(s[max(0,m.start()-90):m.end()+140])
+          PY
