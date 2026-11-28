@@ -28,4 +28,7 @@ class SessionPolicyTest {
         assertArrayEquals(a, decoded[3]?.get(0) as ByteArray)
         assertArrayEquals(b, decoded[3]?.get(1) as ByteArray)
     }
+    @Test fun starPtpUsesRecoveredPort() {
+        assertEquals(4391, StarPtpPacket.PORT)
+    }
 }

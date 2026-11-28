@@ -77,35 +77,44 @@ class FilePcmSource(
     private val queue = ChunkQueue()
 
     override fun open() {
-        val ex = MediaExtractor()
-        ex.setDataSource(context, uri, null)
-        var track = -1
-        var mime: String? = null
-        for (i in 0 until ex.trackCount) {
-            val fmt = ex.getTrackFormat(i)
-            val m = fmt.getString(MediaFormat.KEY_MIME) ?: continue
-            if (m.startsWith("audio/")) {
-                track = i
-                mime = m
-                inRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                inChannels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                break
+        var ex: MediaExtractor? = null
+        var c: MediaCodec? = null
+        try {
+            val extractor = MediaExtractor()
+            ex = extractor
+            extractor.setDataSource(context, uri, null)
+            var track = -1
+            var mime: String? = null
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val m = fmt.getString(MediaFormat.KEY_MIME) ?: continue
+                if (m.startsWith("audio/")) {
+                    track = i
+                    mime = m
+                    inRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    inChannels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    break
+                }
             }
+            if (track < 0 || mime == null) throw IllegalStateException("В файле нет аудиодорожки")
+            extractor.selectTrack(track)
+            val codec = MediaCodec.createDecoderByType(mime)
+            c = codec
+            val fmt = extractor.getTrackFormat(track)
+            fmt.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            codec.configure(fmt, null, null, 0)
+            codec.start()
+            this.extractor = extractor
+            this.codec = codec
+            inputDone = false
+            outputDone = false
+            converter.reset()
+            queue.clear()
+        } catch (t: Throwable) {
+            runCatching { c?.release() }
+            runCatching { ex?.release() }
+            throw t
         }
-        if (track < 0 || mime == null) {
-            ex.release()
-            throw IllegalStateException("В файле нет аудиодорожки")
-        }
-        ex.selectTrack(track)
-        val c = MediaCodec.createDecoderByType(mime)
-        val fmt = ex.getTrackFormat(track)
-        fmt.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-        c.configure(fmt, null, null, 0)
-        c.start()
-        extractor = ex
-        codec = c
-        inputDone = false
-        outputDone = false
     }
 
     override fun read(out: ByteArray): Int {
@@ -283,13 +292,27 @@ class PlaybackCaptureSource(
 
 /** Линейный ресемплер + приведение каналов к stereo 48 кГц. */
 class PcmConverter(private val outRate: Int = 48_000) {
-    private var carry = 0.0
+    /** Следующая позиция входа относительно к текущему блоку; -1 — предыдущий последний сэмпл. */
+    private var position = 0.0
+    private var previousFrame: ShortArray? = null
+    private var lastInRate = 0
+    private var lastChannels = 0
+
+    fun reset() {
+        position = 0.0
+        previousFrame = null
+        lastInRate = 0
+        lastChannels = 0
+    }
 
     fun convert(pcm: ByteArray, size: Int, inRate: Int, inChannels: Int): ByteArray {
-        if (size < 2) return ByteArray(0)
+        if (size < 2 || inRate <= 0 || outRate <= 0) return ByteArray(0)
         val channels = inChannels.coerceAtLeast(1)
         val samples = size / 2 / channels
         if (samples <= 0) return ByteArray(0)
+        if (lastInRate != inRate || lastChannels != channels) reset()
+        lastInRate = inRate
+        lastChannels = channels
 
         val shorts = ShortArray(samples * channels)
         ByteBuffer.wrap(pcm, 0, samples * channels * 2)
@@ -298,6 +321,9 @@ class PcmConverter(private val outRate: Int = 48_000) {
             .get(shorts)
 
         if (inRate == outRate && channels == 2) {
+            reset()
+            lastInRate = inRate
+            lastChannels = channels
             val out = ByteArray(samples * 4)
             val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
             for (i in 0 until samples) {
@@ -310,22 +336,35 @@ class PcmConverter(private val outRate: Int = 48_000) {
         val ratio = inRate.toDouble() / outRate
         val out = java.io.ByteArrayOutputStream(((samples / ratio) * 4).toInt() + 8)
         val bb = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
-        var t = carry
-        while (t < samples - 1) {
-            val i0 = floor(t).toInt()
-            val frac = t - i0
+        val previous = previousFrame
+        var t = position
+        while (t <= samples - 1) {
             for (ch in 0 until 2) {
-                val c = if (channels == 1) 0 else minOf(ch, channels - 1)
-                val s0 = shorts[i0 * channels + c].toDouble()
-                val s1 = shorts[(i0 + 1) * channels + c].toDouble()
-                val v = (s0 + (s1 - s0) * frac).toInt().coerceIn(-32768, 32767).toShort()
+                val sourceChannel = if (channels == 1) 0 else minOf(ch, channels - 1)
+                val value = when {
+                    t < 0.0 && previous != null -> {
+                        val frac = t + 1.0
+                        val s0 = previous[sourceChannel.coerceAtMost(previous.size - 1)].toDouble()
+                        val s1 = shorts[sourceChannel].toDouble()
+                        s0 + (s1 - s0) * frac
+                    }
+                    t >= samples - 1.0 -> shorts[(samples - 1) * channels + sourceChannel].toDouble()
+                    else -> {
+                        val i0 = floor(t).toInt()
+                        val frac = t - i0
+                        val s0 = shorts[i0 * channels + sourceChannel].toDouble()
+                        val s1 = shorts[(i0 + 1) * channels + sourceChannel].toDouble()
+                        s0 + (s1 - s0) * frac
+                    }
+                }
                 bb.clear()
-                bb.putShort(v)
+                bb.putShort(value.toInt().coerceIn(-32768, 32767).toShort())
                 out.write(bb.array(), 0, 2)
             }
             t += ratio
         }
-        carry = t - samples
+        position = t - samples
+        previousFrame = ShortArray(channels) { shorts[(samples - 1) * channels + it] }
         return out.toByteArray()
     }
 }
@@ -340,6 +379,12 @@ private class ChunkQueue {
         if (bytes.isEmpty()) return
         chunks.addLast(bytes)
         size += bytes.size
+    }
+
+    fun clear() {
+        chunks.clear()
+        offset = 0
+        size = 0
     }
 
     fun pop(dst: ByteArray, dstOffset: Int, max: Int): Int {

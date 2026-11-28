@@ -5,7 +5,7 @@ import java.nio.ByteOrder
 
 /** Wire codec from Salute TV StarPTP 1.100.39, not a complete clock service. */
 object StarPtpPacket {
-    const val PORT = 10001
+    const val PORT = 4391
     enum class Type(val code: Int, val size: Int) { SYNC(0x10, 11), DELAY_REQUEST(0x11, 3), DELAY_RESPONSE(0x12, 11) }
     data class Message(val type: Type, val sequence: Int, val micros: Long?)
 

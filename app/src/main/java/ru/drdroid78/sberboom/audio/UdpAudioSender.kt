@@ -31,6 +31,12 @@ class UdpAudioSender(
 
     val packetsSent = AtomicLong()
     val bytesSent = AtomicLong()
+    private val lastPacketAtMs = AtomicLong()
+
+    fun lastPacketAgeMs(nowMs: Long = System.currentTimeMillis()): Long {
+        val last = lastPacketAtMs.get()
+        return if (last == 0L) Long.MAX_VALUE else (nowMs - last).coerceAtLeast(0)
+    }
 
     fun localAddress(): String = try {
         socket.localAddress?.hostAddress ?: "0.0.0.0"
@@ -44,6 +50,7 @@ class UdpAudioSender(
         val packet = UdpPacket.build(sequence, timestamp, opus)
         try {
             socket.send(DatagramPacket(packet, packet.size, target, port))
+            lastPacketAtMs.set(System.currentTimeMillis())
             packetsSent.incrementAndGet()
             bytesSent.addAndGet(packet.size.toLong())
         } catch (t: Throwable) {

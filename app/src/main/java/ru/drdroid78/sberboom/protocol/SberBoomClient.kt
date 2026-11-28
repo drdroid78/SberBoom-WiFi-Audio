@@ -291,7 +291,8 @@ class SberBoomClient(
         } ?: return PairStartResult.Error(
             "Ответ PinConnect не получен", PairError.NETWORK
         )
-        return when (val parsed = PinPairingPolicy.parseStart(response, existingToken)) {
+        val parsed = PinPairingPolicy.parseStart(response, existingToken)
+        return when (parsed.state) {
             PinPairingPolicy.StartResult.State.AUTHORIZED -> PairStartResult.Success(existingToken!!)
             PinPairingPolicy.StartResult.State.PIN_REQUIRED -> PairStartResult.PinRequired(parsed.sessionId!!)
             PinPairingPolicy.StartResult.State.SESSION_ALREADY_ACTIVE -> PairStartResult.Error(
@@ -334,7 +335,8 @@ class SberBoomClient(
         } ?: return PairResult.Error(
             "Ответ ConfirmPinConnect не получен", PairError.NETWORK
         )
-        return when (val parsed = PinPairingPolicy.parseConfirm(response)) {
+        val parsed = PinPairingPolicy.parseConfirm(response)
+        return when (parsed.state) {
             PinPairingPolicy.ConfirmResult.State.AUTHORIZED -> {
                 pinToken = parsed.token
                 PairResult.Success(parsed.token!!)

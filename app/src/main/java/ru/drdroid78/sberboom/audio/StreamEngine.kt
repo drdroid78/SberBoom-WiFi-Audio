@@ -148,7 +148,7 @@ class StreamEngine(private val context: Context) {
                 startedAt = android.os.SystemClock.elapsedRealtime()
                 _state.value = State.Streaming(config.host, s.destinationPort, config.source.description, true)
                 DiagLog.i("Получен транспортный ACK; звук и PTP на колонке не подтверждены")
-                sourceThread = Thread({ sourceLoop(config.source, ticket) }, "sberboom-audio-source").apply { start() }
+                sourceThread = Thread({ sourceLoop(config.source, ticket, enc) }, "sberboom-audio-source").apply { start() }
                 keepAliveJob = scope.launch {
                     var missed = 0
                     while (isActive && gate.isActive(ticket)) {
@@ -173,7 +173,12 @@ class StreamEngine(private val context: Context) {
                 statsJob = scope.launch {
                     while (isActive && gate.isActive(ticket)) {
                         delay(500)
-                        _stats.value = Stats(s.packetsSent.get(), s.bytesSent.get(), android.os.SystemClock.elapsedRealtime() - startedAt, 0)
+                        _stats.value = Stats(
+                            s.packetsSent.get(),
+                            s.bytesSent.get(),
+                            android.os.SystemClock.elapsedRealtime() - startedAt,
+                            s.lastPacketAgeMs()
+                        )
                     }
                 }
                 Result.success(Unit)
@@ -189,7 +194,7 @@ class StreamEngine(private val context: Context) {
         }
     }
 
-    private fun sourceLoop(source: PcmSource, ticket: SessionGate.Ticket) {
+    private fun sourceLoop(source: PcmSource, ticket: SessionGate.Ticket, enc: OpusEncoder) {
         val chunk = ByteArray(Protocol.OPUS_FRAME_SAMPLES * 4)
         DiagLog.i("Источник открыт: ${source.description}")
         val startedAtMs = android.os.SystemClock.elapsedRealtime()
@@ -201,7 +206,7 @@ class StreamEngine(private val context: Context) {
                     DiagLog.i("Источник завершён")
                     break
                 }
-                encoder?.encode(chunk, n)
+                enc.encode(chunk, n)
                 frames += n / 4
                 // Держим реальное время: файл/тон декодируются быстрее, чем звучат.
                 val expectedMs = frames * 1000L / 48_000L
@@ -218,6 +223,8 @@ class StreamEngine(private val context: Context) {
         } catch (t: Throwable) {
             if (gate.isActive(ticket)) requestStop(ticket, "Ошибка источника: ${t.message}")
         } finally {
+            // Энкодером владеет этот поток: terminate() больше не освобождает его параллельно.
+            runCatching { enc.stop() }
             if (gate.isActive(ticket)) requestStop(ticket, null)
         }
     }
@@ -243,12 +250,18 @@ class StreamEngine(private val context: Context) {
         keepAliveJob = null; monitorJob = null; statsJob = null
         // Stop network output before closing the remote session.
         runCatching { sender?.close() }
-        sourceThread?.interrupt()
+        val thread = sourceThread
+        thread?.interrupt()
         runCatching { activeSource?.close() }
         activeSource = null
-        runCatching { sourceThread?.join(700) }
+        if (thread != null) {
+            runCatching { thread.join(3_000) }
+            if (thread.isAlive) DiagLog.w("Поток источника не завершился за 3 с; энкодер освободит сам поток")
+        } else {
+            // До запуска sourceThread энкодером владеет startup-путь.
+            runCatching { encoder?.stop() }
+        }
         sourceThread = null
-        runCatching { encoder?.stop() }
         encoder = null; sender = null
         if (gate.shouldSendStop(ticket) && masterId.isNotEmpty()) {
             val ack = try {

@@ -243,4 +243,22 @@ class ProtocolTest {
             assertEquals(bb.getShort(i * 4), bb.getShort(i * 4 + 2))
         }
     }
+
+    @Test
+    fun pcmConverterMatchesOneShotAcrossIrregularBlocks() {
+        val framesIn = 4410
+        val src = ByteArray(framesIn * 2)
+        val input = java.nio.ByteBuffer.wrap(src).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until framesIn) input.putShort((i % 30000).toShort())
+        val expected = PcmConverter().convert(src, src.size, 44_100, 1)
+        val converter = PcmConverter()
+        val output = java.io.ByteArrayOutputStream()
+        var offset = 0
+        for (block in listOf(997, 1024, 713, framesIn - 997 - 1024 - 713)) {
+            val end = minOf(src.size, offset + block * 2)
+            output.write(converter.convert(src.copyOfRange(offset, end), end - offset, 44_100, 1))
+            offset = end
+        }
+        assertArrayEquals(expected, output.toByteArray())
+    }
 }

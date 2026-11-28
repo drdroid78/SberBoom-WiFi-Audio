@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.text.InputFilter
 import android.text.InputType
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast

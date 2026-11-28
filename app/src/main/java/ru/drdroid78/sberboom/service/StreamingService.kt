@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -97,7 +98,13 @@ class StreamingService : Service() {
             return START_NOT_STICKY
         }
         val capture = action == ACTION_START_CAPTURE
-        startForegroundCompat(if (capture) "Захват аудио" else "Поток на динамик", capture)
+        try {
+            startForegroundCompat(if (capture) "Захват аудио" else "Поток на динамик", capture)
+        } catch (t: Exception) {
+            DiagLog.e("Не удалось запустить foreground-сервис: ${t.message}", t)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val prefs = AppPrefs(this)
         val host = intent?.getStringExtra(EXTRA_HOST) ?: prefs.lastHost
@@ -113,6 +120,7 @@ class StreamingService : Service() {
         acquireLocks()
 
         startJob = scope.launch {
+            try {
             val source: PcmSource = when (action) {
                 ACTION_START_TONE -> ToneSource()
                 ACTION_START_FILE -> {
@@ -165,6 +173,13 @@ class StreamingService : Service() {
                 stopForegroundCompat()
                 stopSelf()
             }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Exception) {
+                DiagLog.e("Ошибка подготовки аудио: ${t.message}", t)
+                stopForegroundCompat()
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
@@ -174,7 +189,8 @@ class StreamingService : Service() {
             val pm = getSystemService(PowerManager::class.java)
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SberBoomAudio:stream").apply {
                 setReferenceCounted(false)
-                acquire(6 * 60 * 60 * 1000L)
+                // Освобождается в stopForegroundCompat()/onDestroy(), а не по истечении 6 часов.
+                acquire()
             }
         }
         if (wifiLock == null) {
