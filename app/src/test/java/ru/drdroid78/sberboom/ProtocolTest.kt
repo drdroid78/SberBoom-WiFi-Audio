@@ -1,5 +1,6 @@
 package ru.drdroid78.sberboom
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -76,6 +77,31 @@ class ProtocolTest {
         val start = audio.nested(Protocol.AUDIO_START_STREAMING)!!
         assertEquals(json, start.str(1))
         assertEquals(0L, start.long(2))
+    }
+
+    @Test
+    fun startStreamingCarriesMeasuredSignedOffsetInMilliseconds() {
+        val offsetUs = -1_234_567L
+        val offsetMs = Protocol.StartStreamingTiming.offsetMs(offsetUs)
+        assertEquals(-1_234L, offsetMs)
+        val master = Protocol.syncedMaster("source-device", offsetMs)
+        val decodedMaster = Tlv.decode(master)
+        assertEquals("source-device", decodedMaster.str(1))
+        assertEquals(-1_234L, decodedMaster.long(2)!!)
+
+        val cmd = Protocol.starCommandAudioStart(
+            "source-device", "mr-1", "source-device", "{}",
+            Protocol.StartStreamingTiming.monoTimestampMs(50_000L),
+            listOf(master)
+        )
+        val audio = Tlv.decode(cmd).nested(Protocol.STAR_FIELD_AUDIO_STREAM)!!
+        val start = Tlv.decodeRepeated(audio.bytes(Protocol.AUDIO_START_STREAMING)!!)
+        assertEquals(50_410L, start[2]!!.single())
+        val masters = start[3]!!
+        assertEquals(1, masters.size)
+        val startMaster = Tlv.decode(masters.single() as ByteArray)
+        assertEquals("source-device", startMaster.str(1))
+        assertEquals(-1_234L, startMaster.long(2)!!)
     }
 
     @Test

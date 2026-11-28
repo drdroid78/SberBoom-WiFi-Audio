@@ -24,7 +24,11 @@ import ru.drdroid78.sberboom.data.AppPrefs
 import ru.drdroid78.sberboom.protocol.Protocol
 import ru.drdroid78.sberboom.protocol.JwtInfo
 import ru.drdroid78.sberboom.protocol.SberBoomClient
+import ru.drdroid78.sberboom.protocol.StarPtpPacket
+import ru.drdroid78.sberboom.protocol.StarPtpPeer
 import ru.drdroid78.sberboom.util.DiagLog
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -81,6 +85,7 @@ class StreamEngine(private val context: Context) {
     private var client: SberBoomClient? = null
     private var sender: UdpAudioSender? = null
     private var encoder: OpusEncoder? = null
+    @Volatile private var ptpPeer: StarPtpPeer? = null
     private var sessionId: String = ""
     private var masterId: String = ""
     private var senderId: String = ""
@@ -105,9 +110,13 @@ class StreamEngine(private val context: Context) {
                     if (!gate.isStarting(ticket)) throw kotlinx.coroutines.CancellationException("Остановка сессии")
                 }
                 checkStarting()
+                require(config.host.isNotBlank() && config.clientId.isNotBlank()) {
+                    "Не заданы адрес динамика или ID устройства-источника"
+                }
                 JwtInfo.validationError(config.jwt)?.let { throw IllegalStateException(it) }
+                val sourceDeviceId = config.clientId.trim()
                 _state.value = State.Connecting("Подключение к ${config.host}:${config.wsPort}")
-                val c = SberBoomClient(config.host, config.wsPort, config.clientName, config.clientId, config.certificatePin)
+                val c = SberBoomClient(config.host, config.wsPort, config.clientName, sourceDeviceId, config.certificatePin)
                 client = c
                 c.setTokens(config.pinToken, config.jwt)
                 c.connect().getOrThrow()
@@ -116,13 +125,42 @@ class StreamEngine(private val context: Context) {
                     c.fetchMetaData()?.serialNumber.orEmpty()
                 }
                 checkStarting()
-                require(speaker.isNotEmpty()) { "Не удалось определить ID динамика" }
-                if (config.speakerId.isBlank()) AppPrefs(context).speakerId = speaker
-                masterId = speaker
+                if (config.speakerId.isBlank() && speaker.isNotEmpty()) AppPrefs(context).speakerId = speaker
+                // The stock sender is its own timing master; the speaker serial is identity metadata only.
+                masterId = sourceDeviceId
                 sessionId = Protocol.newSessionId()
-                senderId = config.clientId
+                senderId = sourceDeviceId
                 if (config.volume in 0..100) c.setVolume(config.volume)
                 checkStarting()
+
+                val ptpSocket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(StarPtpPacket.PORT))
+                }
+                val peer = try {
+                    StarPtpPeer(
+                        ptpSocket,
+                        InetSocketAddress(config.host, StarPtpPacket.PORT),
+                        intervalUs = 20_000,
+                        onError = { DiagLog.e("StarPTP: ${it.message}") }
+                    )
+                } catch (t: Throwable) {
+                    ptpSocket.close()
+                    throw t
+                }
+                ptpPeer = peer
+                peer.start()
+                val readyEstimate = withTimeoutOrNull(2_500) {
+                    var current = peer.estimate()
+                    while (current == null) {
+                        delay(25)
+                        current = peer.estimate()
+                    }
+                    current
+                }
+                checkStarting()
+                requireNotNull(readyEstimate) { "StarPTP не синхронизирован за 2.5 с; StartStreaming не отправлен" }
+
                 // Prepare local resources before requesting remote state. A failed encoder/file must not start the speaker.
                 val s = UdpAudioSender(config.host, Protocol.chooseUdpPort()) { err ->
                     DiagLog.e(err)
@@ -137,8 +175,25 @@ class StreamEngine(private val context: Context) {
                 activeSource = config.source
                 config.source.open()
                 checkStarting()
-                // No fabricated synced_masters records. Full hardware PTP negotiation remains an acceptance gate.
-                val star = Protocol.starCommandAudioStart(masterId, sessionId, senderId, settings, 0)
+                val fresh = ptpPeer?.estimate()
+                    ?: error("StarPTP estimate истёк; StartStreaming не отправлен")
+                val offsetMs = Protocol.StartStreamingTiming.offsetMs(fresh.localMinusRemoteUs)
+                val monoTimestampMs = Protocol.StartStreamingTiming.monoTimestampMs(
+                    System.nanoTime() / 1_000_000L
+                )
+                val syncedMasters = listOf(Protocol.syncedMaster(masterId, offsetMs))
+                DiagLog.i(
+                    "StarPTP готов: offset=$offsetMs ms, path=${fresh.pathDelayUs / 1_000L} ms, " +
+                        "samples=${fresh.samples}; это ещё не подтверждение звука"
+                )
+                val star = Protocol.starCommandAudioStart(
+                    masterId,
+                    sessionId,
+                    senderId,
+                    settings,
+                    monoTimestampMs,
+                    syncedMasters
+                )
                 if (!gate.markStartSent(ticket)) throw kotlinx.coroutines.CancellationException("Остановка перед StartStreaming")
                 val reply = c.sendStarCommand(star, 4_000)
                 checkStarting()
@@ -162,10 +217,17 @@ class StreamEngine(private val context: Context) {
                     }
                 }
                 monitorJob = scope.launch {
+                    var missedPtp = 0
                     while (isActive && gate.isActive(ticket)) {
                         delay(1_000)
+                        if (!gate.isActive(ticket)) break
                         if (!c.isConnected || JwtInfo.validationError(config.jwt) != null) {
                             requestStop(ticket, "Соединение потеряно или JWT истёк")
+                            break
+                        }
+                        missedPtp = if (ptpPeer?.estimate() != null) 0 else missedPtp + 1
+                        if (missedPtp >= 3) {
+                            requestStop(ticket, "StarPTP не синхронизирован")
                             break
                         }
                     }
@@ -250,6 +312,8 @@ class StreamEngine(private val context: Context) {
         keepAliveJob = null; monitorJob = null; statsJob = null
         // Stop network output before closing the remote session.
         runCatching { sender?.close() }
+        runCatching { ptpPeer?.close() }
+        ptpPeer = null
         val thread = sourceThread
         thread?.interrupt()
         runCatching { activeSource?.close() }

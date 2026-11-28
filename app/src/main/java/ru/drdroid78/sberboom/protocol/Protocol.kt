@@ -221,10 +221,30 @@ object Protocol {
     // AudioStreamingSessionMessage
     // ---------------------------------------------------------------------
 
-    /** StartStreaming{ settings=1, mono_timestamp=2, synced_masters=3 }. Field 3 is omitted until real records are negotiated. */
+    /** Firmware start timing: 400 ms lead plus one 512-frame block at 48 kHz. */
+    object StartStreamingTiming {
+        const val START_DELAY_MS = 400L
+        const val FRAMES_PER_BLOCK = 512L
+        const val SAMPLE_RATE = 48_000L
+
+        fun monoTimestampMs(nowMs: Long): Long =
+            Math.addExact(nowMs, START_DELAY_MS + FRAMES_PER_BLOCK * 1_000L / SAMPLE_RATE)
+
+        /** StartStreaming uses milliseconds; the PTP clock deliberately measures microseconds. */
+        fun offsetMs(localMinusRemoteUs: Long): Long = localMinusRemoteUs / 1_000L
+    }
+
+    /** StartStreaming{ settings=1, mono_timestamp=2, synced_masters=3 }. */
     fun startStreaming(settingsJson: String, monoTimestamp: Long, syncedMasters: List<ByteArray> = emptyList()): ByteArray =
         Tlv.concat(Tlv.fieldString(1, settingsJson), Tlv.fieldVarint(2, monoTimestamp),
             *syncedMasters.map { Tlv.fieldBytes(3, it) }.toTypedArray())
+
+    /** StartStreaming.SyncedMasters{ master=1, offset_ms=int64=2 }. */
+    fun syncedMaster(masterDeviceId: String, offsetMs: Long): ByteArray =
+        Tlv.concat(
+            Tlv.fieldString(1, masterDeviceId),
+            Tlv.fieldVarint(2, offsetMs)
+        )
 
     fun audioSession(
         masterDeviceId: String,
