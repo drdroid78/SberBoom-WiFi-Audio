@@ -13,7 +13,6 @@ import android.net.Uri
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
-import kotlin.math.floor
 import kotlin.math.sin
 
 /** Источник PCM 16-bit stereo 48 кГц. */
@@ -127,7 +126,12 @@ class FilePcmSource(
                 idle = 0
                 continue
             }
-            if (outputDone) break
+            if (outputDone) {
+                val tail = converter.finish()
+                if (tail.isEmpty()) break
+                queue.push(tail)
+                continue
+            }
             if (!pump()) {
                 idle++
                 if (idle > 200) break
@@ -292,14 +296,18 @@ class PlaybackCaptureSource(
 
 /** Линейный ресемплер + приведение каналов к stereo 48 кГц. */
 class PcmConverter(private val outRate: Int = 48_000) {
-    /** Следующая позиция входа относительно к текущему блоку; -1 — предыдущий последний сэмпл. */
-    private var position = 0.0
+    /**
+     * Позиция следующего выхода относительно текущего блока, в единицах 1/outRate
+     * входного сэмпла. Целочисленная фаза не накапливает ошибку Double и потому
+     * даёт одинаковый PCM независимо от разбиения входа на блоки.
+     */
+    private var positionNumerator = 0L
     private var previousFrame: ShortArray? = null
     private var lastInRate = 0
     private var lastChannels = 0
 
     fun reset() {
-        position = 0.0
+        positionNumerator = 0L
         previousFrame = null
         lastInRate = 0
         lastChannels = 0
@@ -333,38 +341,66 @@ class PcmConverter(private val outRate: Int = 48_000) {
             return out
         }
 
-        val ratio = inRate.toDouble() / outRate
-        val out = java.io.ByteArrayOutputStream(((samples / ratio) * 4).toInt() + 8)
+        val denominator = outRate.toLong()
+        val stepNumerator = inRate.toLong()
+        val blockEndNumerator = samples.toLong() * denominator
+        val out = java.io.ByteArrayOutputStream((samples.toLong() * denominator / stepNumerator * 4).toInt() + 16)
         val bb = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
         val previous = previousFrame
-        var t = position
-        while (t <= samples - 1) {
+        var phase = positionNumerator
+        while (phase <= (samples - 1).toLong() * denominator) {
             for (ch in 0 until 2) {
                 val sourceChannel = if (channels == 1) 0 else minOf(ch, channels - 1)
                 val value = when {
-                    t < 0.0 && previous != null -> {
-                        val frac = t + 1.0
+                    phase < 0L && previous != null -> {
+                        val fraction = (phase + denominator).toDouble() / denominator
                         val s0 = previous[sourceChannel.coerceAtMost(previous.size - 1)].toDouble()
                         val s1 = shorts[sourceChannel].toDouble()
-                        s0 + (s1 - s0) * frac
+                        s0 + (s1 - s0) * fraction
                     }
-                    t >= samples - 1.0 -> shorts[(samples - 1) * channels + sourceChannel].toDouble()
+                    phase >= (samples - 1).toLong() * denominator ->
+                        shorts[(samples - 1) * channels + sourceChannel].toDouble()
                     else -> {
-                        val i0 = floor(t).toInt()
-                        val frac = t - i0
+                        val i0 = Math.floorDiv(phase, denominator).toInt()
+                        val fraction = (phase % denominator).toDouble() / denominator
                         val s0 = shorts[i0 * channels + sourceChannel].toDouble()
                         val s1 = shorts[(i0 + 1) * channels + sourceChannel].toDouble()
-                        s0 + (s1 - s0) * frac
+                        s0 + (s1 - s0) * fraction
                     }
                 }
                 bb.clear()
                 bb.putShort(value.toInt().coerceIn(-32768, 32767).toShort())
                 out.write(bb.array(), 0, 2)
             }
-            t += ratio
+            phase += stepNumerator
         }
-        position = t - samples
+        positionNumerator = phase - blockEndNumerator
         previousFrame = ShortArray(channels) { shorts[(samples - 1) * channels + it] }
+        return out.toByteArray()
+    }
+
+    /**
+     * Завершает поток: задерживает последний интерполируемый выход до появления
+     * следующего входного кадра, поэтому на EOS удерживает последний сэмпл.
+     * Вызывается один раз после последнего [convert].
+     */
+    fun finish(): ByteArray {
+        val previous = previousFrame ?: return ByteArray(0)
+        if (positionNumerator >= 0L || lastInRate <= 0) return ByteArray(0)
+        val out = java.io.ByteArrayOutputStream(16)
+        val bb = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+        var phase = positionNumerator
+        while (phase < 0L) {
+            for (ch in 0 until 2) {
+                val sourceChannel = if (lastChannels == 1) 0 else minOf(ch, lastChannels - 1)
+                val value = previous[sourceChannel.coerceAtMost(previous.size - 1)].toDouble()
+                bb.clear()
+                bb.putShort(value.toInt().coerceIn(-32768, 32767).toShort())
+                out.write(bb.array(), 0, 2)
+            }
+            phase += lastInRate.toLong()
+        }
+        positionNumerator = 0L
         return out.toByteArray()
     }
 }

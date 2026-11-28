@@ -260,9 +260,10 @@ class ProtocolTest {
         // 100 мс mono 44.1 кГц -> 100 мс stereo 48 кГц.
         val framesIn = 4410
         val src = ByteArray(framesIn * 2)
-        val out = PcmConverter().convert(src, src.size, 44_100, 1)
+        val oneShot = PcmConverter()
+        val out = oneShot.convert(src, src.size, 44_100, 1) + oneShot.finish()
         val framesOut = out.size / 4
-        assertTrue("framesOut=$framesOut", framesOut in 4700..4810)
+        assertEquals(4800, framesOut)
         // Каналы должны быть заполнены одинаково (mono -> dual mono).
         val bb = java.nio.ByteBuffer.wrap(out).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until 10) {
@@ -276,7 +277,8 @@ class ProtocolTest {
         val src = ByteArray(framesIn * 2)
         val input = java.nio.ByteBuffer.wrap(src).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until framesIn) input.putShort((i % 30000).toShort())
-        val expected = PcmConverter().convert(src, src.size, 44_100, 1)
+        val oneShot = PcmConverter()
+        val expected = oneShot.convert(src, src.size, 44_100, 1) + oneShot.finish()
         val converter = PcmConverter()
         val output = java.io.ByteArrayOutputStream()
         var offset = 0
@@ -285,6 +287,36 @@ class ProtocolTest {
             output.write(converter.convert(src.copyOfRange(offset, end), end - offset, 44_100, 1))
             offset = end
         }
+        output.write(converter.finish())
+        assertArrayEquals(expected, output.toByteArray())
+    }
+
+    @Test
+    fun pcmConverterMatchesOneShotAcrossTinyDownsamplingBlocks() {
+        val framesIn = 4800
+        val src = ByteArray(framesIn * 4)
+        val input = java.nio.ByteBuffer.wrap(src).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until framesIn * 2) input.putShort(((i * 977) % 65536 - 32768).toShort())
+        val oneShot = PcmConverter()
+        val expected = oneShot.convert(src, src.size, 96_000, 2) + oneShot.finish()
+        assertEquals(2400 * 4, expected.size)
+
+        val converter = PcmConverter()
+        val output = java.io.ByteArrayOutputStream()
+        var offset = 0
+        var block = 0
+        while (offset < src.size) {
+            val frames = when (block++ % 4) {
+                0 -> 1
+                1 -> 2
+                2 -> 3
+                else -> 17
+            }
+            val end = minOf(src.size, offset + frames * 4)
+            output.write(converter.convert(src.copyOfRange(offset, end), end - offset, 96_000, 2))
+            offset = end
+        }
+        output.write(converter.finish())
         assertArrayEquals(expected, output.toByteArray())
     }
 }
