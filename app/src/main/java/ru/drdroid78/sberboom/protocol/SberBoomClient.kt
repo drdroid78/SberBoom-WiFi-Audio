@@ -1,5 +1,6 @@
 package ru.drdroid78.sberboom.protocol
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,9 +68,6 @@ class SberBoomClient(
 
     @Volatile
     private var webSocket: WebSocket? = null
-
-    @Volatile
-    private var pairListener: ((Map<Int, Any>) -> Unit)? = null
 
     private val starPending = ConcurrentHashMap<String, CompletableDeferred<StreamReplyPolicy.Ack>>()
 
@@ -182,7 +180,6 @@ class SberBoomClient(
             }
         }
 
-        pairListener?.invoke(requestData)
         scope.launch { _events.emit(requestData) }
     }
 
@@ -205,12 +202,16 @@ class SberBoomClient(
     }
 
     /** Запрос с ожиданием ответа по correlation id. */
-    suspend fun request(op: ByteArray, timeoutMs: Long = 6_000): Map<Int, Any>? {
+    suspend fun request(
+        op: ByteArray,
+        timeoutMs: Long = 6_000,
+        token: String? = pinToken
+    ): Map<Int, Any>? {
         val msgId = UUID.randomUUID().toString()
         val ws = webSocket ?: throw IllegalStateException("not connected")
         val deferred = CompletableDeferred<ByteArray>()
         pending[msgId] = deferred
-        val envelope = Protocol.envelope(msgId, op, pinToken, clientName, clientId)
+        val envelope = Protocol.envelope(msgId, op, token, clientName, clientId)
         if (!ws.send(envelope.toByteString())) {
             pending.remove(msgId)
             throw IllegalStateException("send failed")
@@ -276,60 +277,96 @@ class SberBoomClient(
     }
 
     /**
-     * PIN-сопряжение. Пользователь нажимает «+» на динамике.
-     * Возвращает выданный PIN-токен (UUID >= 16 символов).
+     * Первый этап PIN handshake. Поле 2 ответа — pin_connection_session,
+     * а не access token. Новый PIN-токен выдаётся только ConfirmPinConnect.
      */
-    suspend fun pairWithButton(timeoutMs: Long = 120_000): PairResult {
-        val ws = webSocket ?: return PairResult.Error("нет соединения")
-        val result = CompletableDeferred<PairResult>()
-
-        pairListener = listener@{ data ->
-            val init = data.nested(Protocol.OP_PIN_CONNECT)
-            if (init != null) {
-                when (init.long(1)) {
-                    Protocol.PAIR_AUTHORIZED -> {
-                        val t = init.str(2)
-                        if (!t.isNullOrEmpty() && t.length >= 16) {
-                            pinToken = t
-                            if (!result.isCompleted) result.complete(PairResult.Success(t))
-                        }
-                    }
-                    Protocol.PAIR_WAITING -> Unit
-                    Protocol.PAIR_BUSY -> if (!result.isCompleted) {
-                        result.complete(PairResult.Error("Сопряжение уже выполняется"))
-                    }
-                    Protocol.PAIR_DISABLED -> if (!result.isCompleted) {
-                        result.complete(PairResult.Error("Режим сопряжения выключен на динамике"))
-                    }
-                }
-            }
-            val confirm = data.nested(Protocol.OP_CONFIRM_PIN_CONNECT)
-            if (confirm != null) {
-                when (confirm.long(1)) {
-                    Protocol.PAIR_CONFIRM_OK -> {
-                        val t = confirm.str(2)
-                        if (!t.isNullOrEmpty() && t.length >= 16) {
-                            pinToken = t
-                            if (!result.isCompleted) result.complete(PairResult.Success(t))
-                        }
-                    }
-                    Protocol.PAIR_CONFIRM_REJECTED -> if (!result.isCompleted) {
-                        result.complete(PairResult.Error("Пользователь отклонил сопряжение"))
-                    }
-                }
-            }
+    suspend fun beginPairing(timeoutMs: Long = 8_000): PairStartResult {
+        val existingToken = pinToken
+        val response = try {
+            request(Protocol.pinConnectRequest(existingToken), timeoutMs, token = existingToken)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return PairStartResult.Error(
+            "Ответ PinConnect не получен", PairError.NETWORK
+        )
+        return when (val parsed = PinPairingPolicy.parseStart(response, existingToken)) {
+            PinPairingPolicy.StartResult.State.AUTHORIZED -> PairStartResult.Success(existingToken!!)
+            PinPairingPolicy.StartResult.State.PIN_REQUIRED -> PairStartResult.PinRequired(parsed.sessionId!!)
+            PinPairingPolicy.StartResult.State.SESSION_ALREADY_ACTIVE -> PairStartResult.Error(
+                "Сессия сопряжения уже активна", PairError.SESSION_ACTIVE
+            )
+            PinPairingPolicy.StartResult.State.TOO_MANY_REQUESTS -> PairStartResult.Error(
+                "Слишком много запросов сопряжения", PairError.TOO_MANY_REQUESTS
+            )
+            PinPairingPolicy.StartResult.State.DISABLED -> PairStartResult.Error(
+                "Сопряжение отключено на динамике", PairError.DISABLED
+            )
+            PinPairingPolicy.StartResult.State.ERROR -> PairStartResult.Error(
+                "Динамик отклонил PinConnect", PairError.REJECTED
+            )
+            PinPairingPolicy.StartResult.State.INVALID_RESPONSE -> PairStartResult.Error(
+                "Некорректный ответ PinConnect", PairError.INVALID_RESPONSE
+            )
         }
+    }
 
-        try {
-            val msgId = UUID.randomUUID().toString()
-            val op = Protocol.op(Protocol.OP_PIN_CONNECT)
-            val envelope = Protocol.envelope(msgId, op, null, clientName, clientId)
-            if (!ws.send(envelope.toByteString())) return PairResult.Error("не удалось отправить запрос")
-            return withTimeoutOrNull(timeoutMs) { result.await() }
-                ?: PairResult.Error("Таймаут: нажмите «+» на динамике")
-        } finally {
-            pairListener = null
+    /** Второй этап: session ID + показанный динамиком 6-символьный PIN. */
+    suspend fun confirmPairing(
+        sessionId: String,
+        pinCode: String,
+        timeoutMs: Long = 8_000
+    ): PairResult {
+        if (sessionId.isBlank() || pinCode.length != 6) {
+            return PairResult.Error("Нужны session ID и 6-символьный PIN", PairError.INVALID_INPUT)
         }
+        val response = try {
+            request(
+                Protocol.confirmPinConnectRequest(sessionId, pinCode),
+                timeoutMs,
+                token = null
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return PairResult.Error(
+            "Ответ ConfirmPinConnect не получен", PairError.NETWORK
+        )
+        return when (val parsed = PinPairingPolicy.parseConfirm(response)) {
+            PinPairingPolicy.ConfirmResult.State.AUTHORIZED -> {
+                pinToken = parsed.token
+                PairResult.Success(parsed.token!!)
+            }
+            PinPairingPolicy.ConfirmResult.State.WRONG_PIN -> PairResult.Error(
+                "Неверный PIN", PairError.WRONG_PIN
+            )
+            PinPairingPolicy.ConfirmResult.State.ATTEMPTS_LIMIT -> PairResult.Error(
+                "Лимит неверных попыток исчерпан; начните новую сессию", PairError.ATTEMPTS_LIMIT
+            )
+            PinPairingPolicy.ConfirmResult.State.BAD_SESSION -> PairResult.Error(
+                "Session ID не совпадает; начните новую сессию", PairError.BAD_SESSION
+            )
+            PinPairingPolicy.ConfirmResult.State.DISABLED -> PairResult.Error(
+                "Сопряжение отключено на динамике", PairError.DISABLED
+            )
+            PinPairingPolicy.ConfirmResult.State.ERROR -> PairResult.Error(
+                "Динамик отклонил ConfirmPinConnect", PairError.REJECTED
+            )
+            PinPairingPolicy.ConfirmResult.State.INVALID_RESPONSE -> PairResult.Error(
+                "Некорректный ответ ConfirmPinConnect", PairError.INVALID_RESPONSE
+            )
+        }
+    }
+
+    /** Отменяет созданную PIN-сессию; новый токен для этого не требуется. */
+    suspend fun cancelPairing(timeoutMs: Long = 2_000): Boolean = try {
+        request(Protocol.cancelPinConnectRequest(), timeoutMs, token = null) != null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
     }
 
     fun close() {
@@ -343,9 +380,28 @@ class SberBoomClient(
         scope.cancel()
     }
 
+    sealed class PairStartResult {
+        data class PinRequired(val sessionId: String) : PairStartResult()
+        data class Success(val token: String) : PairStartResult()
+        data class Error(val message: String, val code: PairError) : PairStartResult()
+    }
+
     sealed class PairResult {
         data class Success(val token: String) : PairResult()
-        data class Error(val message: String) : PairResult()
+        data class Error(val message: String, val code: PairError) : PairResult()
+    }
+
+    enum class PairError {
+        INVALID_INPUT,
+        INVALID_RESPONSE,
+        NETWORK,
+        WRONG_PIN,
+        ATTEMPTS_LIMIT,
+        BAD_SESSION,
+        SESSION_ACTIVE,
+        TOO_MANY_REQUESTS,
+        DISABLED,
+        REJECTED
     }
 
     enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }

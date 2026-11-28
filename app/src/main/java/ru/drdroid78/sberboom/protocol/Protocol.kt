@@ -84,12 +84,21 @@ object Protocol {
     const val MEDIA_REMOVE_DISLIKE = 15
 
     // ---- PIN pairing -----------------------------------------------------
-    const val PAIR_WAITING = 1L
+    // PinConnect.Response.Status
+    const val PAIR_ERROR = 0L
+    const val PAIR_INPUT_PIN_CODE = 1L
     const val PAIR_AUTHORIZED = 2L
-    const val PAIR_BUSY = 3L
+    const val PAIR_SESSION_ALREADY_ACTIVE = 3L
+    const val PAIR_TOO_MANY_REQUESTS = 4L
     const val PAIR_DISABLED = 5L
-    const val PAIR_CONFIRM_OK = 1L
-    const val PAIR_CONFIRM_REJECTED = 2L
+
+    // ConfirmPinConnect.Response.Status
+    const val PAIR_CONFIRM_ERROR = 0L
+    const val PAIR_CONFIRM_AUTHORIZED = 1L
+    const val PAIR_CONFIRM_WRONG_PIN = 2L
+    const val PAIR_CONFIRM_ATTEMPTS_LIMIT = 3L
+    const val PAIR_CONFIRM_BAD_SESSION = 4L
+    const val PAIR_CONFIRM_DISABLED = 5L
 
     const val STATUS_OK = 1L
     const val STATUS_ERROR = 4L
@@ -171,6 +180,22 @@ object Protocol {
         Tlv.fieldBytes(opCode, inner)
 
     fun emptyInner(): ByteArray = Tlv.fieldBytes(1, ByteArray(0))
+
+    /** PinConnect.Request { optional string pin_access_token = 1; } */
+    fun pinConnectRequest(pinAccessToken: String? = null): ByteArray = op(
+        OP_PIN_CONNECT,
+        pinAccessToken?.takeIf { it.isNotBlank() }?.let { Tlv.fieldString(1, it) }
+            ?: ByteArray(0)
+    )
+
+    /** ConfirmPinConnect.Request { session = 1; pin_code = 2; } */
+    fun confirmPinConnectRequest(sessionId: String, pinCode: String): ByteArray = op(
+        OP_CONFIRM_PIN_CONNECT,
+        Tlv.concat(Tlv.fieldString(1, sessionId), Tlv.fieldString(2, pinCode))
+    )
+
+    /** CancelPinConnect.Request { Empty empty = 1; } */
+    fun cancelPinConnectRequest(): ByteArray = op(OP_CANCEL_PIN_CONNECT, emptyInner())
 
     fun getMetaDataRequest(): ByteArray = op(OP_GET_META_DATA)
     fun getStateRequest(): ByteArray = op(OP_GET_STATE)

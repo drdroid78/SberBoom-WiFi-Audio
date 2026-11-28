@@ -6,10 +6,14 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.text.InputFilter
+import android.text.InputType
+import android.view.ViewGroup
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -21,6 +25,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.launch
 import ru.drdroid78.sberboom.R
 import ru.drdroid78.sberboom.audio.StreamEngine
@@ -57,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
     private var client: SberBoomClient? = null
     private var connectedName: String = ""
+    private var pairDialog: AlertDialog? = null
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -211,7 +217,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        lifecycleScope.launch { runCatching { client?.close() } }
+        pairDialog?.dismiss()
+        pairDialog = null
+        runCatching { client?.close() }
         client = null
         super.onDestroy()
     }
@@ -400,22 +408,129 @@ class MainActivity : AppCompatActivity() {
             pairButton.isEnabled = false
             pairHint.text = getString(R.string.pair_waiting)
             try {
-                when (val r = c.pairWithButton()) {
-                    is SberBoomClient.PairResult.Success -> {
-                        try { prefs.setTokenFor(c.host, c.port, r.token) }
-                        catch (e: Exception) { toast(getString(R.string.credentials_save_error)); return@launch }
-                        DiagLog.i("PIN-сопряжение успешно, токен сохранён (${r.token.length} символов)")
+                when (val result = c.beginPairing()) {
+                    is SberBoomClient.PairStartResult.Success -> {
+                        if (!savePairingToken(c, result.token)) return@launch
                         pairHint.text = getString(R.string.pair_success)
                         toast(getString(R.string.pair_success))
                     }
-                    is SberBoomClient.PairResult.Error -> {
-                        DiagLog.e("PIN-сопряжение: ${r.message}")
-                        pairHint.text = getString(R.string.pair_failed, r.message)
+                    is SberBoomClient.PairStartResult.PinRequired -> showPinDialog(c, result.sessionId)
+                    is SberBoomClient.PairStartResult.Error -> {
+                        DiagLog.e("PIN-сопряжение: ${result.message}")
+                        pairHint.text = getString(R.string.pair_failed, result.message)
                     }
                 }
             } finally {
-                pairButton.isEnabled = true
+                pairButton.isEnabled = pairDialog == null
             }
+        }
+    }
+
+    private fun showPinDialog(c: SberBoomClient, sessionId: String) {
+        val padding = (24 * resources.displayMetrics.density).toInt()
+        val inputLayout = TextInputLayout(this).apply {
+            hint = getString(R.string.pair_pin_hint)
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+        }
+        val pinInput = TextInputEditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(InputFilter.LengthFilter(6))
+            maxLines = 1
+        }
+        inputLayout.addView(
+            pinInput,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, 0, padding, 0)
+            addView(inputLayout)
+        }
+        var completed = false
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.pair_pin_title)
+            .setMessage(R.string.pair_pin_message)
+            .setView(container)
+            .setPositiveButton(R.string.pair_confirm, null)
+            .setNegativeButton(R.string.pair_cancel) { _, _ ->
+                completed = true
+                lifecycleScope.launch {
+                    val cancelled = c.cancelPairing()
+                    pairHint.text = getString(
+                        if (cancelled) R.string.pair_cancelled else R.string.pair_cancel_unconfirmed
+                    )
+                }
+            }
+            .setCancelable(true)
+            .create()
+        pairDialog = dialog
+        pairButton.isEnabled = false
+        pairHint.text = getString(R.string.pair_pin_required)
+        dialog.setOnShowListener {
+            val confirmButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            confirmButton.setOnClickListener {
+                val pin = pinInput.text?.toString()?.trim().orEmpty()
+                if (pin.length != 6) {
+                    inputLayout.error = getString(R.string.pair_pin_length)
+                    return@setOnClickListener
+                }
+                inputLayout.error = null
+                confirmButton.isEnabled = false
+                lifecycleScope.launch {
+                    when (val result = c.confirmPairing(sessionId, pin)) {
+                        is SberBoomClient.PairResult.Success -> {
+                            completed = true
+                            if (!savePairingToken(c, result.token)) {
+                                dialog.dismiss()
+                                return@launch
+                            }
+                            DiagLog.i("PIN-сопряжение успешно, токен сохранён (${result.token.length} символов)")
+                            pairHint.text = getString(R.string.pair_success)
+                            toast(getString(R.string.pair_success))
+                            dialog.dismiss()
+                        }
+                        is SberBoomClient.PairResult.Error -> {
+                            if (!dialog.isShowing) return@launch
+                            if (result.code == SberBoomClient.PairError.WRONG_PIN) {
+                                inputLayout.error = result.message
+                                pinInput.text?.clear()
+                                pinInput.requestFocus()
+                                confirmButton.isEnabled = true
+                            } else {
+                                completed = true
+                                DiagLog.e("PIN-сопряжение: ${result.message}")
+                                pairHint.text = getString(R.string.pair_failed, result.message)
+                                dialog.dismiss()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dialog.setOnDismissListener {
+            if (pairDialog === dialog) pairDialog = null
+            pairButton.isEnabled = true
+            if (!completed) {
+                lifecycleScope.launch {
+                    val cancelled = c.cancelPairing()
+                    pairHint.text = getString(
+                        if (cancelled) R.string.pair_cancelled else R.string.pair_cancel_unconfirmed
+                    )
+                }
+            }
+        }
+        dialog.show()
+        pinInput.requestFocus()
+    }
+
+    private fun savePairingToken(c: SberBoomClient, token: String): Boolean {
+        return try {
+            prefs.setTokenFor(c.host, c.port, token)
+            true
+        } catch (e: Exception) {
+            DiagLog.e("Не удалось сохранить PIN-токен", e)
+            toast(getString(R.string.credentials_save_error))
+            false
         }
     }
 

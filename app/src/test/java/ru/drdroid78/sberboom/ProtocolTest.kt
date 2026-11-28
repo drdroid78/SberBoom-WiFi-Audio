@@ -178,6 +178,26 @@ class ProtocolTest {
     }
 
     @Test
+    fun pinConnectWireUsesSessionFlow() {
+        assertEquals("2200", Protocol.pinConnectRequest().hex())
+        assertEquals("22070a05746f6b656e", Protocol.pinConnectRequest("token").hex())
+    }
+
+    @Test
+    fun confirmPinConnectWireHasSessionAndPin() {
+        val request = Protocol.confirmPinConnectRequest("sess", "ABC123")
+        assertEquals("320e0a04736573731206414243313233", request.hex())
+        val inner = Tlv.decode(request).bytes(Protocol.OP_CONFIRM_PIN_CONNECT)!!
+        assertEquals("sess", Tlv.decode(inner).str(1))
+        assertEquals("ABC123", Tlv.decode(inner).str(2))
+    }
+
+    @Test
+    fun cancelPinConnectWireHasEmptyRequest() {
+        assertEquals("2a020a00", Protocol.cancelPinConnectRequest().hex())
+    }
+
+    @Test
     fun metaDataParsing() {
         val deviceInfo = Tlv.concat(
             Tlv.fieldString(1, "SberBoom Home"),
